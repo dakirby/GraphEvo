@@ -6,6 +6,8 @@ from multiprocessing import Process, Queue
 import copy
 import dill as pickle
 import sys
+from tqdm import tqdm
+
 
 def __x_in_range__(x, rng):
     if rng[0] <= x and x < rng[1]:
@@ -136,7 +138,7 @@ class NetworkPopulation():
             if not os.path.exists(out_dir):
                 os.makedirs(out_dir)
 
-        for g in range(self.num_generations):
+        for g in tqdm(range(self.num_generations)):
             if not DEBUG:
                 # Save population:
                 gen_dir = os.path.join(out_dir, 'g'+str(g))

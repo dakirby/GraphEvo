@@ -12,4 +12,4 @@ import os
 
 if __name__ == "__main__":
     netPop = graph_evolution.NetworkPopulation()
-    fit_hist = netPop.run()
+    fit_hist = netPop.run(cpu=8)

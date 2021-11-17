@@ -5,7 +5,7 @@ import multiprocessing as mp
 from multiprocessing import Process, Queue
 import copy
 import dill as pickle
-
+import sys
 
 def __x_in_range__(x, rng):
     if rng[0] <= x and x < rng[1]:
@@ -175,8 +175,9 @@ class NetworkPopulation():
             # Close queue and multiprocessing
             if cpu > 1:
                 q.close()
-                for p in processes:
-                    p.close()
+                if sys.version_info[1] > 6:
+                    for p in processes:
+                        p.close()
 
             # Compute relative fitness within this generation
             mean_fit = np.mean(fit_scores)

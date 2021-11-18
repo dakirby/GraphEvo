@@ -159,20 +159,19 @@ class NetworkPopulation():
                 arr = self.individuals[(processors-1)*interval:]
                 processes.append(Process(target=__evo_func__, args=(q, arr, (processors-1)*interval)))
                 processes[-1].start()
-
                 # Combine results from all processes
                 fit_scores = []
-                for p in processes:
-                    p.join()  # wait for all processes to finish
                 for r in range(self.num_individuals):
                     fit_scores.append(q.get())
+                for p in processes:
+                    p.join()  # wait for all processes to finish
+
             else:  # single thread version; useful for debugging
                 q = []
                 fit_scores = __evo_func__(q, self.individuals, 0, DEBUG=True)
 
             fit_scores.sort(key=lambda tup: tup[0])  # sorts in place
             fit_scores = [el[1] for el in fit_scores]   # discards index
-            #population_fitness.append(fit_scores)
 
             # Close queue and multiprocessing
             if cpu > 1:

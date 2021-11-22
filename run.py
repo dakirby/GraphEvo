@@ -6,7 +6,6 @@ Run the following command before running any python files in this directory:
 """
 import immune_network
 import graph_evolution
-from networkx.drawing.layout import shell_layout
 import numpy as np
 import os
 

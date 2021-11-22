@@ -44,6 +44,15 @@ class NetworkEvolver():
             self.decision_boundaries.append(np.sum(probs[:i]))
         self.decision_boundaries.append(1.0)
 
+    def __score__(self):
+        y0 = self.immune_network.equilibrate()
+        y0[0] = 0.5  # initialize parasite to 0.5 for scoring run
+        y0[1] = 0.01  # initialize detecotr cell to 0.01 for scoring run
+        y0[-1] = 0.01  # initialize effector cell to 0.01 for scoring run
+        t = (0, 20.)
+        _, score = self.immune_network.run_graph(t, y0=y0, score=True)
+        return score
+
     def evolve_graph(self, DEBUG=False, DEBUG_decision=0.):
         mut_probability = self.mut_prob * self.immune_network.mutable_species
         if DEBUG:
@@ -71,18 +80,20 @@ class NetworkEvolver():
         self.generation_id += 1
 
     def get_next_gen(self, DEBUG=False):
+        """
+        Performs one evolution step, which includes probabilistically evolving
+        the graph and then scoring the new graph. The DEBUG flag allows one to
+        monitor the network structure.
+        """
         if DEBUG:
             edges_before = copy.deepcopy(self.immune_network.graph.edges())
+
         self.evolve_graph(DEBUG=DEBUG)
+
         if DEBUG:
             edges_after = copy.deepcopy(self.immune_network.graph.edges())
 
-        y0 = self.immune_network.equilibrate()
-        y0[0] = 0.5  # initialize parasite to 0.5 for scoring run
-        y0[1] = 0.01  # initialize detecotr cell to 0.01 for scoring run
-        y0[-1] = 0.01  # initialize effector cell to 0.01 for scoring run
-        t = (0, 20.)
-        _, score = self.immune_network.run_graph(t, y0=y0, score=True)
+        score = self.__score__()
         self.fitness_history.append(score[0])
 
         if DEBUG:

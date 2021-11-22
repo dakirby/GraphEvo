@@ -194,10 +194,11 @@ class TestNetworkPopulationMethods(unittest.TestCase):
         if we fail to collect some of the results from the Queue.
         """
         numGen = 4
-        netPop = graph_evolution.NetworkPopulation(num_generations=numGen, num_individuals=4)
-        num_ind_before = copy.deepcopy(netPop.num_individuals)
+        numInd = 100
+        netPop = graph_evolution.NetworkPopulation(num_generations=numGen, num_individuals=numInd)
+        num_ind_before = len(netPop.individuals)
         popfit = netPop.run(cpu=2)
-        num_ind_after = netPop.num_individuals
+        num_ind_after = len(netPop.individuals)
         self.assertEqual(num_ind_before, num_ind_after)
         self.assertEqual(len(popfit), numGen)
 

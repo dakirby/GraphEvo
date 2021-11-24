@@ -137,7 +137,7 @@ def plot_mean_connectivity(outdir):
     np.save(outdir + os.sep + 'tf_conn.npy', tf_conn)
 
 
-def plot_fitness_history(outdir):
+def plot_fitness_history(outdir, SAVE=False):
     """
     Computes the average fitness per generation.
     Saves a graph of this quantity over all generations into outdir.
@@ -164,7 +164,8 @@ def plot_fitness_history(outdir):
     plt.savefig(outdir + os.sep + 'mean_fit.pdf')
 
     # Save fitness history
-    np.save(outdir + os.sep + 'fit_hist.npy', fit_hist)
+    if SAVE:
+        np.save(outdir + os.sep + 'fit_hist.npy', fit_hist)
 
 
 if __name__ == '__main__':

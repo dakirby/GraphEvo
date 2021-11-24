@@ -12,3 +12,4 @@ import os
 if __name__ == "__main__":
     netPop = graph_evolution.NetworkPopulation()
     fit_hist = netPop.run(cpu=8)
+    np.save(os.path.join(os.getcwd(), 'output', 'fit_hist.npy', fit_hist)

@@ -4,9 +4,79 @@ import graph_evolution
 import numpy as np
 import matplotlib.pyplot as plt
 from tqdm import tqdm
+import networkx as nx
+
+
+def unnest(d, keys=[]):
+    """
+    Handy function to turn a dict into a tuple of tuples so that it is hashable
+    and can therefore be used as a dictionary key.
+    Source: https://stackoverflow.com/questions/57627575/convert-a-nested-dictionary-into-list-of-tuples
+    """
+    result = []
+    for k, v in d.items():
+        if isinstance(v, dict):
+            result.extend(unnest(v, keys + [k]))
+        else:
+            result.append(tuple(keys + [k, v]))
+    return tuple(result)
+
+
+def plot_perplexity(outdir):
+    """
+    Counts the number of unique graphs in each generation and plots the
+    perplexity over all generations. This plot is saved to outdir, as well as
+    the dictionary of unique graphs and their abundances per generation.
+    """
+    generations = [int(dir[1:]) for dir in os.listdir(outdir) if dir.startswith('g')]
+    num_generations = max(generations)
+    individuals = [int(dir[3:-4]) for dir in os.listdir(outdir + os.sep + 'g0') if dir.startswith('net')]
+    num_individuals = max(individuals)
+
+    diversity = [{} for _ in range(num_generations)]
+
+    # Build a dictionary of unique graphs
+    # and count the number of occurences of each
+    for g in tqdm(range(num_generations)):
+        for i in tqdm(range(num_individuals), leave=False):
+            ind = graph_evolution.NetworkEvolver()
+            fname = os.path.join(outdir, 'g' + str(g), 'net' + str(i) + '.pkl')
+            ind.load(fname)
+            G = ind.immune_network.graph
+            d = nx.to_dict_of_dicts(G)
+            key = unnest(d)  # makes dict a hashable object
+            if key not in list(diversity[g].keys()):
+                diversity[g].update({key: 1})
+            else:
+                diversity[g][key] += 1
+    np.save(outdir + os.sep + 'diversity.npy', diversity)
+
+    # Compute the discrete probability of each unique graph
+    discrete_prob = [[] for _ in range(num_generations)]
+    for g in range(num_generations):
+        for key in diversity[g].keys():
+            discrete_prob[g].append(diversity[g][key] / num_individuals)
+    # Compute the entropy and perplexity for each generation
+    entropy = []
+    for g in range(num_generations):
+        ent = [-p*np.log2(p) for p in discrete_prob[g]]
+        entropy.append(np.sum(ent))
+    perplexity = np.exp(entropy)
+
+    # Plot perplexity
+    fig, ax = plt.subplots()
+    ax.plot(perplexity, linewidth=2)
+    ax.set_xlabel('Generation')
+    ax.set_ylabel('Perplexity')
+    plt.savefig(outdir + os.sep + 'perplexity.pdf')
 
 
 def plot_mean_connectivity(outdir):
+    """
+    Computes the average node degree for each class of nodes in the graph:
+    cytokines, receptors, transcription factors, and the effector cell.
+    Saves a graph of these quantities over all generations into outdir.
+    """
     generations = [int(dir[1:]) for dir in os.listdir(outdir) if dir.startswith('g')]
     num_generations = max(generations)
     individuals = [int(dir[3:-4]) for dir in os.listdir(outdir + os.sep + 'g0') if dir.startswith('net')]
@@ -61,6 +131,10 @@ def plot_mean_connectivity(outdir):
 
 
 def plot_fitness_history(outdir):
+    """
+    Computes the average fitness per generation.
+    Saves a graph of this quantity over all generations into outdir.
+    """
     generations = [int(dir[1:]) for dir in os.listdir(outdir) if dir.startswith('g')]
     num_generations = max(generations)
     individuals = [int(dir[3:-4]) for dir in os.listdir(outdir + os.sep + 'g0') if dir.startswith('net')]
@@ -90,4 +164,5 @@ if __name__ == '__main__':
     OUTDIR = os.path.join(os.getcwd(), 'output')
 
     # plot_fitness_history(OUTDIR)
-    plot_mean_connectivity(OUTDIR)
+    # plot_mean_connectivity(OUTDIR)
+    plot_perplexity(OUTDIR)

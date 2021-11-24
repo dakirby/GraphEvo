@@ -70,6 +70,13 @@ def plot_perplexity(outdir):
     ax.set_ylabel('Perplexity')
     plt.savefig(outdir + os.sep + 'perplexity.pdf')
 
+    # Plot perplexity
+    fig, ax = plt.subplots()
+    ax.plot(entropy, linewidth=2)
+    ax.set_xlabel('Generation')
+    ax.set_ylabel('Entropy')
+    plt.savefig(outdir + os.sep + 'entropy.pdf')
+
 
 def plot_mean_connectivity(outdir):
     """

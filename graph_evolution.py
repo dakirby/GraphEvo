@@ -140,83 +140,108 @@ class NetworkPopulation():
         with open(pik, 'wb') as f:
             pickle.dump(self, f)
 
+    def __mkdir__(self, dir):
+        if not os.path.exists(dir):
+            os.makedirs(dir)
+
+    def __save_gen__(self, gen_dir):
+        for idx, i in enumerate(self.individuals):
+            i.save(gen_dir, idx)
+        self.save(os.path.join(gen_dir, 'Pop.pkl'))
+
+    def __select__(self, individuals, fitnesses):
+        num_individuals = len(individuals)
+
+        # Compute relative fitness within this generation
+        mean_fit = np.mean(fitnesses)
+        rel_fit = np.divide(fitnesses, mean_fit)
+
+        # sorts pop. by rel. fit. (biggest first)
+        sort_idx = np.argsort(rel_fit)[::-1]
+        norm_rel_fit = np.divide(rel_fit, max(rel_fit))
+
+        new_pop = []
+        new_pop_fitness = []
+        # Select individuals until we have a population of the right size
+        while len(new_pop) < num_individuals:
+            fit_bound = np.random.random()
+            # find all individuals with rel. fitness greater than fit_bound
+            selection_pool = []
+            for i in sort_idx:
+                if norm_rel_fit[i] > fit_bound:
+                    selection_pool.append(i)
+            # choose new individual from selection_pool
+            new_idx = np.random.choice(selection_pool)
+            new_pop.append(copy.deepcopy(individuals[new_idx]))
+            # Also record the fitness of the selected individual
+            new_pop_fitness.append(fitnesses[new_idx])
+        return new_pop, new_pop_fitness, norm_rel_fit
+
+    def __score__(self, cpu, processors, interval, evo_func):
+        if cpu > 1:
+            q = Queue()
+            processes = []
+            for i in range(processors-1):
+                arr = self.individuals[i*interval:(i+1)*interval]
+                p = Process(target=evo_func, args=(q, arr, i*interval))
+                processes.append(p)
+                p.start()
+            arr = self.individuals[(processors-1)*interval:]
+            processes.append(Process(target=evo_func, args=(q, arr, (processors-1)*interval)))
+            processes[-1].start()
+            # Combine results from all processes
+            fit_scores = []
+            for r in range(self.num_individuals):
+                fit_scores.append(q.get())
+            for p in processes:
+                p.join()  # wait for all processes to finish
+
+        else:  # single thread version; useful for debugging
+            q = []
+            fit_scores = evo_func(q, self.individuals, 0, DEBUG=True)
+
+        # Close queue and multiprocessing
+        if cpu > 1:
+            q.close()
+            if sys.version_info[1] > 6:
+                for p in processes:
+                    p.close()
+
+        return fit_scores
+
     def run(self, cpu=8, out_dir='', DEBUG=False):
+        """
+        Optionally multithreaded.
+        """
+        # Set up multiprocessing
         if DEBUG:
             cpu = 1
         processors = min(cpu, mp.cpu_count())
         interval = int(self.num_individuals / processors)
-        population_fitness = []
+        # Set up output directory
         if out_dir == '':
             out_dir = os.path.join(os.getcwd(), 'output')
-            if not os.path.exists(out_dir):
-                os.makedirs(out_dir)
-
+            self.__mkdir__(out_dir)
+        # Iterate through generations
+        population_fitness = []
         for g in tqdm(range(self.num_generations)):
             if not DEBUG:
                 # Save population:
                 gen_dir = os.path.join(out_dir, 'g'+str(g))
-                if not os.path.exists(gen_dir):
-                    os.makedirs(gen_dir)
-                for idx, i in enumerate(self.individuals):
-                    i.save(gen_dir, idx)
-                self.save(os.path.join(gen_dir, 'Pop.pkl'))
-            # Evaluate individuals
-            if cpu > 1:
-                q = Queue()
-                processes = []
-                for i in range(processors-1):
-                    arr = self.individuals[i*interval:(i+1)*interval]
-                    p = Process(target=__evo_func__, args=(q, arr, i*interval))
-                    processes.append(p)
-                    p.start()
-                arr = self.individuals[(processors-1)*interval:]
-                processes.append(Process(target=__evo_func__, args=(q, arr, (processors-1)*interval)))
-                processes[-1].start()
-                # Combine results from all processes
-                fit_scores = []
-                for r in range(self.num_individuals):
-                    fit_scores.append(q.get())
-                for p in processes:
-                    p.join()  # wait for all processes to finish
-
-            else:  # single thread version; useful for debugging
-                q = []
-                fit_scores = __evo_func__(q, self.individuals, 0, DEBUG=True)
+                self.__mkdir__(gen_dir)
+                self.__save_gen__(gen_dir)
+            # For this generation, evaluate individuals
+            fit_scores = self.__score__(cpu, processors, interval, __evo_func__)
 
             fit_scores.sort(key=lambda tup: tup[0])  # sorts in place
             fit_scores = [el[1] for el in fit_scores]   # discards index
 
-            # Close queue and multiprocessing
-            if cpu > 1:
-                q.close()
-                if sys.version_info[1] > 6:
-                    for p in processes:
-                        p.close()
-
-            # Compute relative fitness within this generation
-            mean_fit = np.mean(fit_scores)
-            rel_fit = np.divide(fit_scores, mean_fit)
-            sort_idx = np.argsort(rel_fit)[::-1]  # sorts pop. by rel. fit. (biggest first)
-            norm_rel_fit = np.divide(rel_fit, max(rel_fit))
-
-            # Select next generation
-            new_pop = []
-            # Add new row for fitness of selected individuals
+            # Perform evolutionary selection
             population_fitness.append([])
-            # Select individuals until we have a population of the right size
-            while len(new_pop) < self.num_individuals:
-                fit_bound = np.random.random()
-                # find all individuals with rel. fitness greater than fit_bound
-                selection_pool = []
-                for i in sort_idx:
-                    if norm_rel_fit[i] > fit_bound:
-                        selection_pool.append(i)
-                # choose new individual from selection_pool
-                new_idx = np.random.choice(selection_pool)
-                new_pop.append(copy.deepcopy(self.individuals[new_idx]))
-                # Also record the fitness of the selected individual
-                population_fitness[-1].append(fit_scores[new_idx])
+            new_pop, new_pop_fitness, norm_rel_fit =\
+                self.__select__(self.individuals, fit_scores)
             self.individuals = new_pop
+            population_fitness[-1].append(new_pop_fitness)
 
         if DEBUG:
             return population_fitness, norm_rel_fit

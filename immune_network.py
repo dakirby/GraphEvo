@@ -7,6 +7,12 @@ import matplotlib.pyplot as plt
 import copy
 
 
+def __is_empty__(x):
+    if isinstance(x, str):
+        return x == ''
+    elif isinstance(x, tuple):
+        return x == ()
+
 class ImmuneGraph():
     """
     ImmuneGraph object stores a NetworkX graph representing a signaling network
@@ -53,9 +59,19 @@ class ImmuneGraph():
     def choose_receptor(self):
         return np.random.choice(self.receptors)
 
-    def choose_protein(self):
-        proteins = self.cytokines + self.receptors + self.transcription_factors
+    def choose_protein(self, exclude_cyt=False):
+        if exclude_cyt:
+            proteins = self.receptors + self.transcription_factors
+        else:
+            proteins = self.cytokines + self.receptors + self.transcription_factors
         return np.random.choice(proteins)
+
+    def __find_index__(self, arr, el):
+        for idx, a in enumerate(arr):
+            if a == el:
+                return idx
+        print(arr, el)
+        raise KeyError
 
     # Plotting functions
     def draw_graph(self, layout=graphviz_layout):
@@ -77,8 +93,11 @@ class ImmuneGraph():
         plt.show()
 
     # Evolution Functions
-    def new_interaction(self):
-        prot = self.choose_protein()
+    def new_interaction(self, DEBUG_choice=()):
+        if __is_empty__(DEBUG_choice):
+            prot = self.choose_protein()
+        else:
+            prot = DEBUG_choice[0]
         if prot.startswith('c'):  # cytokine
             r_cnx = [ed[1] for ed in self.graph.edges(prot) if ed[1].startswith('r')]
             unconnected_r = [r for r in self.receptors if r not in r_cnx]
@@ -112,41 +131,59 @@ class ImmuneGraph():
                 unconnected_E = []
             if unconnected_r != [] or unconnected_tf != [] or unconnected_E != []:
                 # tf is not fully connected
-                node = np.random.choice(unconnected_r + unconnected_tf + unconnected_E)
+                if __is_empty__(DEBUG_choice):
+                    node = np.random.choice(unconnected_r + unconnected_tf + unconnected_E)
+                else:
+                    node = DEBUG_choice[1]
                 if node.startswith('r'):
                     self.graph.add_edge(prot, node, weight=self.new_production_rate())
                 else:
                     w = self.new_interaction_strength()
                     self.graph.add_edge(prot, node, weight=w)
 
-    def delete_interaction(self):
-        prot = self.choose_protein()
+    def delete_interaction(self, DEBUG_choice=()):
+        if __is_empty__(DEBUG_choice):
+            prot = self.choose_protein()
+        else:
+            prot = DEBUG_choice[1]
         # Decetor cell to cytokine does not count as an interaction
         allowed_edges = [ed for ed in self.graph.edges(prot) if 'D' not in ed]
         if allowed_edges != []:
-            ed = allowed_edges[np.random.choice(list(range(len(allowed_edges))))]
+            if __is_empty__(DEBUG_choice):
+                ed = allowed_edges[np.random.choice(list(range(len(allowed_edges))))]
+            else:
+                ed = DEBUG_choice
             self.graph.remove_edge(*ed)
 
-    def mutate_interaction(self):
-        prot = self.choose_protein()
+    def mutate_interaction(self, DEBUG_choice=()):
+        if __is_empty__(DEBUG_choice):
+            prot = self.choose_protein()
+        else:
+            prot = DEBUG_choice[1]
         edges = self.graph.edges(prot)
         if len(edges) != 0:
-            ed = edges[np.random.choice(list(range(len(edges))))]
+            if __is_empty__(DEBUG_choice):
+                ed = edges[np.random.choice(list(range(len(edges))))]
+            else:
+                ed = DEBUG_choice
+
             w = self.graph.get_edge_data(*ed)['weight']
             w = w * (0.5 + np.random.random())
             self.graph[ed[0]][ed[1]]['weight'] = w
         # otherwise just bad luck, skip to avoid infinite searching for edges
 
-    def duplicate_protein(self):
-        prot = self.choose_protein()
+    def duplicate_protein(self, DEBUG_choice=''):
+        if __is_empty__(DEBUG_choice):
+            prot = self.choose_protein()
+        else:
+            prot = DEBUG_choice
         edges = self.graph.edges(prot)
-        prot_type = prot[0]
         self.mutable_species += 1
-        if prot_type == 'c':
+        if prot.startswith('c'):
             label = 'c' + str(self.largest_cytokine_label + 1)
             self.cytokines.append(label)
             self.largest_cytokine_label += 1
-        elif prot_type == 'r':
+        elif prot.startswith('r'):
             label = 'r' + str(self.largest_receptor_label + 1)
             self.receptors.append(label)
             self.largest_receptor_label += 1
@@ -159,29 +196,23 @@ class ImmuneGraph():
             w = self.graph.get_edge_data(*ed)['weight']
             self.graph.add_edge(label, ed[1], weight=w)
 
-    def delete_protein(self):
-        prot = self.choose_protein()
-        prot_type = prot[0]
+    def delete_protein(self, DEBUG_choice=''):
+        if __is_empty__(DEBUG_choice):
+            prot = self.choose_protein()
+        else:
+            prot = DEBUG_choice
         self.mutable_species -= 1
         self.graph.remove_node(prot)
-        if prot_type == 'c':
+        if prot.startswith('c'):
             idx = self.__find_index__(self.cytokines, prot)
             self.cytokines.pop(idx)
-        elif prot_type == 'r':
+        elif prot.startswith('r'):
             idx = self.__find_index__(self.receptors, prot)
             self.receptors.pop(idx)
         else:
             idx = self.__find_index__(self.transcription_factors, prot)
             self.transcription_factors.pop(idx)
 
-    def __find_index__(self, arr, el):
-        for idx, a in enumerate(arr):
-            if a == el:
-                return idx
-        print(arr, el)
-        raise KeyError
-
-    # Build ODE system based on graph
     def run_graph(self, t_span, y0=np.array([]), score=False, DEBUG=False):
         # Build the ODE integrator
         num_cytokines = len(self.cytokines)
@@ -201,14 +232,15 @@ class ImmuneGraph():
         else:
             assert y0.shape[0] == 3 + num_cytokines + 2*(num_receptors + num_tfs)
 
-        num_species = len(y0)
-
         def fun(t, y, debug=DEBUG):
             # t is irrelevant unless there is an explicit dependence on time
-            dydt = np.zeros(num_species)
+            dydt = np.zeros(len(y))
             # infectious agent
-            #              effector kills agent   + logistic growth
-            dydt[0] += -self.k_par_eff*y[-1]*y[0] + self.r_par*y[0]*(1.-y[0])
+            if y[0] < 1E-4:  # infection is considered cleared
+                dydt[0] = -y[0]
+            else:
+                #              effector kills agent   + logistic growth
+                dydt[0] += -self.k_par_eff*y[-1]*y[0] + self.r_par*y[0]*(1.-y[0])
 
             # detector cell activation
             dydt[1] += self.k_det_par*y[0]*y[1]*(1.-y[1])
@@ -329,3 +361,25 @@ class ImmuneGraph():
         plt.yticks([])
 
         plt.show()
+
+
+class Parasite():
+    """
+    Represents the effect of a co-evolving parasite on a population of immune
+    signaling networks. Parasites are capable of up- or down-regulating any
+    of the host receptors or transcription factors.
+    """
+    def __init__(self):
+        self.interaction_node = 'r0'
+        self.interaction_strength = self.new_interaction_strength()
+
+    def new_interaction_strength(self):
+        return np.random.normal()
+
+    def new_interaction_protein(self, immnet, DEBUG_decision=''):
+        if __is_empty__(DEBUG_decision):
+            self.interaction_node = immnet.choose_protein(exclude_cyt=True)
+            self.interaction_strength = self.new_interaction_strength()
+        else:
+            self.interaction_node = DEBUG_decision
+            self.interaction_strength = 0.7

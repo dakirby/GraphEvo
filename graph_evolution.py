@@ -1,4 +1,6 @@
 import immune_network
+from immune_network import ImmuneGraph, Parasite
+from scipy.integrate import solve_ivp
 import numpy as np
 import os
 import multiprocessing as mp
@@ -53,7 +55,7 @@ class NetworkEvolver():
         _, score = self.immune_network.run_graph(t, y0=y0, score=True)
         return score
 
-    def evolve_graph(self, DEBUG=False, DEBUG_decision=0.):
+    def evolve_graph(self, DEBUG=False, DEBUG_decision=0., DEBUG_choice=''):
         mut_probability = self.mut_prob * self.immune_network.mutable_species
         if DEBUG:
             mut_probability = 1.
@@ -62,15 +64,15 @@ class NetworkEvolver():
             if DEBUG:
                 decision = DEBUG_decision
             if __x_in_range__(decision, self.decision_boundaries[0:2]):
-                self.immune_network.new_interaction()
+                self.immune_network.new_interaction(DEBUG_choice=DEBUG_choice)
             elif __x_in_range__(decision, self.decision_boundaries[1:3]):
-                self.immune_network.delete_interaction()
+                self.immune_network.delete_interaction(DEBUG_choice=DEBUG_choice)
             elif __x_in_range__(decision, self.decision_boundaries[2:4]):
-                self.immune_network.mutate_interaction()
+                self.immune_network.mutate_interaction(DEBUG_choice=DEBUG_choice)
             elif __x_in_range__(decision, self.decision_boundaries[3:5]):
-                self.immune_network.duplicate_protein()
+                self.immune_network.duplicate_protein(DEBUG_choice=DEBUG_choice)
             elif __x_in_range__(decision, self.decision_boundaries[4:6]):
-                self.immune_network.delete_protein()
+                self.immune_network.delete_protein(DEBUG_choice=DEBUG_choice)
             else:
                 print("Mutation probabilities may have changed")
                 print(self.decision_boundaries)
@@ -220,3 +222,170 @@ class NetworkPopulation():
             return population_fitness, norm_rel_fit
         else:
             return population_fitness
+
+
+class CoEvolutionGraph(ImmuneGraph):
+    """
+    CoEvolutionGraph object stores a NetworkX graph representing a signaling
+    network and a paired parasite.
+    This object modifies several methods from the inhereited ImmuneGraph class.
+    """
+    def __init__(self, immnet, parasite):
+        super().__init__()
+        self.parasite = parasite
+        # transfer all parameters from input immnet
+        self.graph = immnet.graph
+        self.cytokines = immnet.cytokines
+        self.largest_cytokine_label = immnet.largest_cytokine_label
+        self.receptors = immnet.receptors
+        self.largest_receptor_label = immnet.largest_receptor_label
+        self.transcription_factors = immnet.transcription_factors
+        self.largest_tf_label = immnet.largest_tf_label
+        self.mutable_species = immnet.mutable_species
+        self.k_par_eff = immnet.k_par_eff
+        self.k_det_par = immnet.k_det_par
+        self.r_par = immnet.r_par
+        self.k_on = immnet.k_on
+
+    def run_graph(self, t_span, y0=np.array([]), score=False, DEBUG=False):
+        """
+        Overrides the run_graph() method from ImmuneGraph class.
+        The main difference is that the effect of the parasite must be added to
+        the derivative function definition.
+        """
+        # Build the ODE integrator
+        num_cytokines = len(self.cytokines)
+        num_receptors = len(self.receptors)
+        num_tfs = len(self.transcription_factors)
+        if y0.size == 0:
+            # initial species concentrations
+            init_agent = [0.5]
+            init_detector = [0.01]
+            init_effector = [0.01]
+            init_cytokines = [0. for _ in range(num_cytokines)]
+            # inactive species plus active species
+            init_receptors = [1. for _ in range(num_receptors)] + [0. for _ in range(num_receptors)]
+            init_tfs = [1. for _ in range(num_tfs)] + [0. for _ in range(num_tfs)]
+            y0 = init_agent + init_detector + init_cytokines + init_receptors + init_tfs + init_effector
+            y0 = np.array(y0)
+        else:
+            assert y0.shape[0] == 3 + num_cytokines + 2*(num_receptors + num_tfs)
+
+        def fun(t, y, debug=DEBUG):
+            # t is irrelevant unless there is an explicit dependence on time
+            dydt = np.zeros(len(y))
+            # infectious agent
+            if y[0] < 1E-4:  # infection is considered cleared
+                dydt[0] = -y[0]
+            else:
+                #              effector kills agent   + logistic growth
+                dydt[0] += -self.k_par_eff*y[-1]*y[0] + self.r_par*y[0]*(1.-y[0])
+
+            # ----------------------------------------
+            # Effect of parasite on host protein
+            # ----------------------------------------
+            if y[0] > 1E-4:  # parasite must be present to have effect
+                target = self.parasite.interaction_node.startswith('r')
+                # target must also be in the host network
+                if target in self.receptors or target in self.transcription_factors:
+                    if target.startswith('r'):  # receptor
+                        idx_i = self.__find_index__(self.receptors, target) + 2 + num_cytokines
+                        idx_a = self.__find_index__(self.receptors, target) + 2 + num_cytokines + num_receptors
+                    else:  # transcription factor
+                        idx_i = self.__find_index__(self.transcription_factors, target) + 2 + num_cytokines + 2*num_receptors
+                        idx_a = self.__find_index__(self.transcription_factors, target) + 2 + num_cytokines + 2*num_receptors + num_tfs
+                    if self.parasite.interaction_strength >= 0:
+                        # if positive interaction then host protein set to fully active
+                        y[idx_i] = 0.
+                        y[idx_a] = 1.
+                    else:
+                        # if negative interaction then host protein fully inactive
+                        y[idx_i] = 1.
+                        y[idx_a] = 0.
+            # ----------------------------------------
+
+            # detector cell activation
+            dydt[1] += self.k_det_par*y[0]*y[1]*(1.-y[1])
+
+            # cytokine production
+            for i, ed in enumerate(self.graph.edges('D'), start=2):
+                k_prod = self.graph.get_edge_data('D', ed[1])['weight']
+                dydt[i] += k_prod*y[1]
+
+            # cytokine binding dynamics
+            for i, cyt in enumerate(self.cytokines, start=2):
+                for ed in self.graph.edges(cyt):
+                    if ed[1] != 'D':
+                        r_offset = self.__find_index__(self.receptors, ed[1]) + 2 + num_cytokines
+                        k_unbind = self.graph.get_edge_data(cyt, ed[1])['weight']
+                        dydt[i] += -self.k_on*y[i]*y[r_offset]  # binding to inactive receptors
+                        dydt[i] += k_unbind*y[r_offset + num_receptors]  # unbinding from active receptors
+
+            # receptor binding dynamics
+            for rec in self.receptors:
+                r_offset = self.__find_index__(self.receptors, rec) + 2 + num_cytokines
+                for ed in self.graph.edges(rec):
+                    if ed[1].startswith('c'): # cytokine edge, not TF edge
+                        cyt = ed[1]
+                        c_idx = 2 + self.__find_index__(self.cytokines, cyt)
+                        k_unbind = self.graph.get_edge_data(rec, cyt)['weight']
+
+                        # binding to inactive receptors
+                        dydt[r_offset] += -self.k_on*y[c_idx]*y[r_offset]
+                        dydt[r_offset+num_receptors] += self.k_on*y[c_idx]*y[r_offset]
+                         # unbinding from active receptors
+                        dydt[r_offset] += k_unbind*y[r_offset+num_receptors]
+                        dydt[r_offset+num_receptors] += -k_unbind*y[r_offset+num_receptors]
+
+            # transcription factor dynamics and effector activity
+            for tf in self.transcription_factors:
+                # inactive tf index
+                tf_idx = self.__find_index__(self.transcription_factors, tf) + 2 + num_cytokines + 2*num_receptors
+                for ed in self.graph.edges(tf):
+                    if ed[1].startswith('r'):  # receptor
+                        k_prod = self.graph.get_edge_data(tf, ed[1])['weight']
+                        # get active receptor species index
+                        r_idx = self.__find_index__(self.receptors, ed[1]) + 2 + num_cytokines + num_receptors
+                        # production dynamics
+                        dydt[tf_idx] += -k_prod*y[r_idx]*y[tf_idx]
+                        dydt[tf_idx+num_tfs] += k_prod*y[r_idx]*y[tf_idx]
+                    elif ed[1].startswith('t'):  # TF interaction
+                        k_ij = self.graph.get_edge_data(tf, ed[1])['weight']
+                        # get inactive second TF index
+                        tf2_idx = self.__find_index__(self.transcription_factors, ed[1])
+                        tf2_idx += 2 + num_cytokines + 2*num_receptors
+                        # interaction dynamics
+                        if k_ij > 0:  # promotion
+                            dydt[tf_idx] += -k_ij*y[tf2_idx+num_tfs]*y[tf_idx]
+                            dydt[tf_idx+num_tfs] += k_ij*y[tf2_idx+num_tfs]*y[tf_idx]
+                        else:  # inhibition
+                            dydt[tf_idx] += -k_ij*y[tf2_idx+num_tfs]*y[tf_idx+num_tfs]
+                            dydt[tf_idx+num_tfs] += k_ij*y[tf2_idx+num_tfs]*y[tf_idx+num_tfs]
+                    elif ed[1] == 'E':
+                        k_act = self.graph.get_edge_data(tf, ed[1])['weight']
+                        dydt[-1] += k_act*y[tf_idx+num_tfs]*y[-1]*(1.-y[-1])
+                        # this should normalize effector activity?
+                    else:
+                        print('Something has mapped this TF to an invalid species')
+                        print(ed)
+                        raise KeyError
+                        return 0
+
+            return dydt
+
+        # Solve the ODE numerically
+        sol = solve_ivp(fun, t_span, y0)
+
+        # compute fitness of this solution
+        if score:
+            Peff_pre = sol.y[-1][0]
+            Peff_post = sol.y[-1][-1]
+            auc = np.trapz(sol.y[0], x=sol.t)
+            volume = 1. / (t_span[1]-t_span[0])
+            normalized_auc = auc * volume
+            fitness_exp = Peff_pre + Peff_post + normalized_auc
+            Whost = np.exp(-fitness_exp)
+            Wagent = np.exp(-(2+volume*(1-auc))) # typo in Graham paper? I think this is correct...
+            return sol, (Whost, Wagent)
+        else:
+            return sol

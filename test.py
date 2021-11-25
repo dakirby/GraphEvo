@@ -72,51 +72,49 @@ class TestNetworkEvolverMethods(unittest.TestCase):
         """
         ne = graph_evolution.NetworkEvolver()
         ne.immune_network = global_ImmuneGraph
+        G = ne.immune_network.graph
         # -------------------- #
         # duplicate_protein()
         # -------------------- #
-        # sets the rng to generate a call that results in duplicating TF node
-        for _ in range(8):
-            np.random.random()
-        ne.evolve_graph(DEBUG=True, DEBUG_decision=0.85)  # duplicate
-        wE0 = ne.immune_network.graph.get_edge_data('t0', 'E')
-        wr0 = ne.immune_network.graph.get_edge_data('t0', 'r0')
-        wE1 = ne.immune_network.graph.get_edge_data('t1', 'E')
-        wr1 = ne.immune_network.graph.get_edge_data('t1', 'r0')
+        ne.evolve_graph(DEBUG=True, DEBUG_decision=0.85, DEBUG_choice='t0')
+        wE0 = G.get_edge_data('t0', 'E')
+        wr0 = G.get_edge_data('t0', 'r0')
+        wE1 = G.get_edge_data('t1', 'E')
+        wr1 = G.get_edge_data('t1', 'r0')
         self.assertEqual(wE0, wE1)
         self.assertEqual(wr0, wr1)
 
         # -------------------- #
         # new_interaction()
         # -------------------- #
-        ne.evolve_graph(DEBUG=True, DEBUG_decision=0.1)  # new interaction
-        new_int = ne.immune_network.graph.get_edge_data('t1', 't0')
-        self.assertEqual({'weight': -0.7033438017074073}, new_int)
+        test_ed = ('t1', 't0')
+        ne.evolve_graph(DEBUG=True, DEBUG_decision=0.1, DEBUG_choice=test_ed)
+        new_int = copy.deepcopy(G.get_edge_data(*test_ed)['weight'])
+        self.assertTrue(isinstance(new_int, float))
+        # there is an interaction assigned
 
         # -------------------- #
         # mutate_interaction()
         # -------------------- #
-        for _ in range(3):  # set rng to the (t0, t1) interaction
-            np.random.random()
-        ne.evolve_graph(DEBUG=True, DEBUG_decision=0.7)  # mutate interaction
-        wNew = ne.immune_network.graph.get_edge_data('t1', 't0')
-        self.assertEqual(wNew, {'weight': -0.47160898629074743})
+        test_ed = ('t1', 't0')
+        ne.evolve_graph(DEBUG=True, DEBUG_decision=0.7, DEBUG_choice=test_ed)
+        wNew = G.get_edge_data(*test_ed)['weight']
+        self.assertNotEqual(wNew, new_int)  # interaction has changed
 
         # -------------------- #
         # delete_interaction()
         # -------------------- #
-        self.assertTrue(('E', 't1') in ne.immune_network.graph.edges())
-        ne.evolve_graph(DEBUG=True, DEBUG_decision=0.3)  # delete interaction
-        self.assertFalse(('E', 't1') in ne.immune_network.graph.edges())
+        test_ed = ('E', 't1')
+        self.assertTrue(test_ed in G.edges())
+        ne.evolve_graph(DEBUG=True, DEBUG_decision=0.3, DEBUG_choice=test_ed)
+        self.assertFalse(test_ed in G.edges())
 
         # -------------------- #
         # delete_protein()
         # -------------------- #
-        for _ in range(7):  # set rng so that we end up deleting the t1 protein
-            np.random.random()
-        ne.evolve_graph(DEBUG=True, DEBUG_decision=0.95)  # delete protein
-        self.assertFalse(('r0', 't1') in ne.immune_network.graph.edges())
-        self.assertFalse(('t0', 't1') in ne.immune_network.graph.edges())
+        ne.evolve_graph(DEBUG=True, DEBUG_decision=0.95, DEBUG_choice='t1')
+        self.assertFalse(('r0', 't1') in G.edges())
+        self.assertFalse(('t0', 't1') in G.edges())
 
 
 class TestNetworkPopulationMethods(unittest.TestCase):
@@ -138,8 +136,12 @@ class TestNetworkPopulationMethods(unittest.TestCase):
         netPop.individuals[1].immune_network.delete_interaction()
         edges_before = []
         score_before = []
-        for i in netPop.individuals:
+        weights_before = [[] for _ in range(4)]
+        for q, i in enumerate(netPop.individuals):
             edges_before.append(i.immune_network.graph.edges())
+            for ed in i.immune_network.graph.edges():
+                weights_before[q].append(i.immune_network.graph.get_edge_data(*ed))
+
             y0 = i.immune_network.equilibrate()
             y0[0] = 0.5  # initialize parasite to 0.5 for scoring run
             y0[1] = 0.01  # initialize detecotr cell to 0.01 for scoring run
@@ -151,8 +153,12 @@ class TestNetworkPopulationMethods(unittest.TestCase):
         popfit, norm_rel_fit = netPop.run(DEBUG=True)
         edges_after = [i.immune_network.graph.edges() for i in netPop.individuals]
         score_after = []
-        for i in netPop.individuals:
-            edges_before.append(i.immune_network.graph.edges())
+        weights_after = [[] for _ in range(4)]
+        for q, i in enumerate(netPop.individuals):
+            edges_after.append(i.immune_network.graph.edges())
+            for ed in i.immune_network.graph.edges():
+                weights_after[q].append(i.immune_network.graph.get_edge_data(*ed))
+
             y0 = i.immune_network.equilibrate()
             y0[0] = 0.5  # initialize parasite to 0.5 for scoring run
             y0[1] = 0.01  # initialize detecotr cell to 0.01 for scoring run
@@ -161,31 +167,27 @@ class TestNetworkPopulationMethods(unittest.TestCase):
             _, score = i.immune_network.run_graph(t, y0=y0, score=True)
             score_after.append(score[0])
 
-        # During this run (single generation), the following evolution happens:
-        # Graph 1: no change
-        self.assertTrue(edges_before[0] == edges_after[0])
-        self.assertTrue(score_before[0] == score_after[0])
-
-        # Graph 2: t0 gets deleted and the (r0, c0) interaction gets deleted
-        self.assertFalse(score_before[1] == score_after[1])
-
-        # Graph 3: does not get selected for the next generation;
-        #          instead, Graph 2 gets selected to replace it
-        self.assertTrue(score_after[1] == score_after[2])
-
-        # Graph 4: no change
-        self.assertTrue(score_before[3] == score_after[3])
+        # Tests that if the score remains the same then the edges were
+        # unchanged, otherwise the edges changed
+        u = [score_before[q]==score_after[q] for q in range(len(score_before))]
+        unchanged_test = []
+        for idx, val in enumerate(u):
+            if val:
+                unchanged_test.append(edges_before[idx]==edges_after[idx])
+            else:
+                unchanged_test.append(edges_before[idx]!=edges_after[idx])
+        self.assertTrue(np.all(unchanged_test))
 
         # ------------------ #
         # Testing (2)
         # ------------------ #
-        # Graph 2 has the greatest fitness after calling netPop.run()
-        # Graph 3 has the lowest relative fitness after calling netPop.run()
-        # This explains why Graph 2 replace Graph 3 during the selection step
-        # This test is only a probabilistic test but it's better than nothing
-        self.assertTrue(np.argmin(norm_rel_fit) == 2)
-        self.assertTrue(np.argmax(norm_rel_fit) == 1)
-        self.assertTrue(np.argmax(popfit[0]) == 1)
+        # Tests that the scores are ordered the same as the relative fitness
+        # which determines probability of selection. Not a perfect test but
+        # it's better than nothing.
+        score_v_fit = np.argsort(score_before) == np.argsort(norm_rel_fit)
+        self.assertTrue(np.all(score_v_fit))
+        return 1
+
 
     def test_multiprocessing(self):
         """
@@ -194,13 +196,54 @@ class TestNetworkPopulationMethods(unittest.TestCase):
         if we fail to collect some of the results from the Queue.
         """
         numGen = 4
-        numInd = 100
+        numInd = 50
         netPop = graph_evolution.NetworkPopulation(num_generations=numGen, num_individuals=numInd)
         num_ind_before = len(netPop.individuals)
         popfit = netPop.run(cpu=2)
         num_ind_after = len(netPop.individuals)
         self.assertEqual(num_ind_before, num_ind_after)
         self.assertEqual(len(popfit), numGen)
+
+
+class TestCoEvolutionGraphMethods(unittest.TestCase):
+
+    def test_run_graph(self):
+        """
+        Tests that:
+        1) equilibration does not include the effect of the parasite
+        2) ODE integration with the effect of a parasite agrees with results
+           computed in Mathematica.
+        """
+        parasite = immune_network.Parasite()
+        parasite.new_interaction_protein(global_ImmuneGraph, DEBUG_decision='t0')
+        coev = graph_evolution.CoEvolutionGraph(global_ImmuneGraph, parasite)
+        # ---------------
+        # Test 1
+        # ---------------
+        t = (0., 20.)
+        y0 = coev.equilibrate()
+        cyt_eq = y0[2] - 24.6838  # cytokine equilibrium
+        rec_eq = y0[3] - 0.03412  # receptor equilibrium
+        tfr_eq = y0[5] - 6.7E-24  # transcription factor equilibrium
+        eff_eq = y0[-1] - 1.0000  # effector cell equilibrium
+        y0Test = np.array([cyt_eq, rec_eq, tfr_eq, eff_eq])
+        self.assertTrue(np.all(y0Test < 0.0001))
+        # ---------------
+        # Test 2
+        # ---------------
+        y0[0] = 0.5  # set parasite to 0.5
+        y0[1] = 0.01  # set detector cell to 0.01
+        y0[-1] = 0.01  # set effector cell to 0.01
+        sim, score = coev.run_graph(t, y0=y0, score=True)
+        final_vec = sim.y[:,-1]
+
+        # Check that transcription factor is always active due to parasite
+        self.assertTrue(np.all(sim.y[-2,:]-1. < 0.0001))
+
+        # Check that species trajectories agree with solution from Mathematica
+        Math_final_vec = [0.00421984, 0.08538, 26.8394, 0.0314334, 0.968567, 0., 1., 1.]
+        rel_err = np.subtract(Math_final_vec, final_vec)
+        self.assertTrue(np.all(rel_err < 0.01))
 
 
 if __name__ == '__main__':

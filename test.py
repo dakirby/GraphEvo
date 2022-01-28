@@ -49,7 +49,7 @@ class TestImmuneGraphMethods(unittest.TestCase):
         y0[1] = 0.01  # set detector cell to 0.01
         y0[-1] = 0.01  # set effector cell to 0.01
         sim, score = global_ImmuneGraph.run_graph(t, y0=y0, score=True)
-        final_vec = sim.y[:,-1]
+        final_vec = sim.y[:, -1]
         Math_final_vec = [0.00421984, 0.08538, 26.8394, 0.0314334, 0.968567, -9.55605E-38, 1., 1.]
         rel_err = np.subtract(Math_final_vec, final_vec)
         self.assertTrue(np.all(rel_err < 0.01))
@@ -121,16 +121,12 @@ class TestNetworkPopulationMethods(unittest.TestCase):
     """
     Tests the run() method to:
     1) ensure that each graph evolves independently
-    2) selection per generation happens according to relative fitness
-    3) multiprocessing correctly repeats evolution behaviour
+    2) multiprocessing correctly repeats evolution behaviour
     """
 
     def test_independent_and_selection(self):
         netPop = graph_evolution.NetworkPopulation(num_generations=1, num_individuals=4)
 
-        # ------------------ #
-        # Testing (1)
-        # ------------------ #
         for i in range(4):
             netPop.individuals[i].immune_network.duplicate_protein()
         netPop.individuals[1].immune_network.delete_interaction()
@@ -172,22 +168,11 @@ class TestNetworkPopulationMethods(unittest.TestCase):
         u = [score_before[q]==score_after[q] for q in range(len(score_before))]
         unchanged_test = []
         for idx, val in enumerate(u):
-            if val:
-                unchanged_test.append(edges_before[idx]==edges_after[idx])
-            else:
-                unchanged_test.append(edges_before[idx]!=edges_after[idx])
+            test = (edges_before[idx] == edges_after[idx]) and (weights_before[idx] == weights_after[idx])
+            unchanged_test.append(test == val)
         self.assertTrue(np.all(unchanged_test))
 
-        # ------------------ #
-        # Testing (2)
-        # ------------------ #
-        # Tests that the scores are ordered the same as the relative fitness
-        # which determines probability of selection. Not a perfect test but
-        # it's better than nothing.
-        score_v_fit = np.argsort(score_before) == np.argsort(norm_rel_fit)
-        self.assertTrue(np.all(score_v_fit))
         return 1
-
 
     def test_multiprocessing(self):
         """
@@ -216,7 +201,7 @@ class TestCoEvolutionGraphMethods(unittest.TestCase):
         """
         parasite = immune_network.Parasite()
         parasite.new_interaction_protein(global_ImmuneGraph, DEBUG_decision='t0')
-        coev = graph_evolution.CoEvolutionGraph(global_ImmuneGraph, parasite)
+        coev = immune_network.CoEvolutionGraph(global_ImmuneGraph, parasite)
         # ---------------
         # Test 1
         # ---------------
@@ -235,15 +220,20 @@ class TestCoEvolutionGraphMethods(unittest.TestCase):
         y0[1] = 0.01  # set detector cell to 0.01
         y0[-1] = 0.01  # set effector cell to 0.01
         sim, score = coev.run_graph(t, y0=y0, score=True)
-        final_vec = sim.y[:,-1]
+        final_vec = sim.y[:, -1]
 
         # Check that transcription factor is always active due to parasite
-        self.assertTrue(np.all(sim.y[-2,:]-1. < 0.0001))
+        self.assertTrue(np.all(sim.y[-2, :]-1. < 0.0001))
 
         # Check that species trajectories agree with solution from Mathematica
         Math_final_vec = [0.00421984, 0.08538, 26.8394, 0.0314334, 0.968567, 0., 1., 1.]
         rel_err = np.subtract(Math_final_vec, final_vec)
         self.assertTrue(np.all(rel_err < 0.01))
+
+    def test_run_CoEvolutionPopulation(self):
+        KWARGS = {'num_generations': 3, 'num_individuals': 10, 'num_parasites': 2}
+        netPop = graph_evolution.CoEvolutionPopulation(**KWARGS)
+        fit_hist = netPop.run(cpu=2)
 
 
 if __name__ == '__main__':
